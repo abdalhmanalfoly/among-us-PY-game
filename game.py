@@ -10,12 +10,13 @@ Maze Battle Royale v3
 - 10 bots by default
 """
 
+from html import entities
 import pygame, random, math, sys, time, heapq
 
 # ---------- Config ----------
 
 
-WIDTH, HEIGHT = 1300, 800
+WIDTH, HEIGHT = 1500, 1000
 FPS = 60
 
 # ---------- Mini Map Settings ----------
@@ -239,7 +240,7 @@ class Bot(Entity):
         super().__init__(x, y, 26, 26, (240, 100, 100))
         self.health = BOT_MAX_HEALTH
         self.speed = BOT_SPEED
-        self.state = "wander"
+        self.state = "idle"
         self.alive = True
         self.idx = idx
         self.shoot_cooldown = random.uniform(0.6, 1.6)
@@ -264,26 +265,21 @@ class Bot(Entity):
         new_x = self.x + (dx / d) * step
         new_y = self.y + (dy / d) * step
 
-    # التحقق إن الخلية داخل حدود المتاهة
         cell_x = int(new_x // CELL_SIZE)
         cell_y = int(new_y // CELL_SIZE)
 
         if 0 <= cell_x < COLS and 0 <= cell_y < ROWS:
-            # فحص التصادم باستخدام مستطيلات الجدران
             test_rect = pygame.Rect(new_x - self.w/2, new_y - self.h/2, self.w, self.h)
             if test_rect.collidelist(wall_rects) == -1:
                 self.x = new_x
                 self.y = new_y
             else:
-            # لو فيه تصادم، احذف أول نقطة في المسار
                 self.path.pop(0)
                 return
         else:
-        # خرج برا حدود المتاهة
             self.path.clear()
             return
 
-    # لو اقترب من الهدف، ينتقل للنقطة التالية
         if d < 4:
             self.path.pop(0)
 
@@ -298,32 +294,26 @@ class Bot(Entity):
 
         targets = [e for e in entities if e is not self and getattr(e, 'alive', True)]
         if not targets:
-            if random.random() < 0.01:
-                nx = clamp(self.x + random.uniform(-80, 80), 10, WORLD_W - 10)
-                ny = clamp(self.y + random.uniform(-80, 80), 10, WORLD_H - 10)
+            if not self.path or random.random() < 0.1:
+                nx = clamp(self.x + random.uniform(-150, 150), 10, WORLD_W - 10)
+                ny = clamp(self.y + random.uniform(-150, 150), 10, WORLD_H - 10)
                 self.path = astar_path(self.grid_pos(), (int(nx // CELL_SIZE), int(ny // CELL_SIZE)))
-            
-
             self.follow_path(dt)
             return
 
         nearest = min(targets, key=lambda t: dist((self.x, self.y), (t.x, t.y)))
         d = dist((self.x, self.y), (nearest.x, nearest.y))
 
-        # إعادة حساب المسار من وقت لآخر
         self.path_timer -= dt
         if self.path_timer <= 0:
-            self.path_timer = 0.6 + random.random() * 0.9
+            self.path_timer = 0.25  
             start = self.grid_pos()
             goal = (int(nearest.x // CELL_SIZE), int(nearest.y // CELL_SIZE))
             self.path = astar_path(start, goal)
             if self.path and self.path[0] == start:
                 self.path.pop(0)
 
-        # تنفيذ المسار بأمان
-        if self.path:
-            self.follow_path(dt)
-        else:
+        if not self.path:
             dx = nearest.x - self.x
             dy = nearest.y - self.y
             mag = math.hypot(dx, dy) or 1
@@ -337,20 +327,72 @@ class Bot(Entity):
             self.y = ny
             if self.rect().collidelist(wall_rects) != -1:
                 self.y = oldy
+        else:
+            self.follow_path(dt)
 
-        # منطق إطلاق النار
         self.shoot_cooldown -= dt
-        if d < 260 and self.shoot_cooldown <= 0:
+        if d < 280 and self.shoot_cooldown <= 0:
             if line_of_sight((self.x, self.y), (nearest.x, nearest.y)):
                 tx = nearest.x + random.uniform(-10, 10)
                 ty = nearest.y + random.uniform(-10, 10)
                 bullets.append(Bullet(self.x, self.y, tx, ty, owner=self))
-                self.shoot_cooldown = random.uniform(0.7, 1.6)
-            elif isinstance(nearest, Bot) and d < 170:
+                self.shoot_cooldown = random.uniform(0.6, 1.0)
+            elif isinstance(nearest, Bot) and d < 180:
                 wpt = choose_wall_point_for_ricochet((self.x, self.y), (nearest.x, nearest.y))
                 if wpt:
                     bullets.append(Bullet(self.x, self.y, wpt[0], wpt[1], owner=self))
-                    self.shoot_cooldown = random.uniform(0.9, 1.8)
+                    self.shoot_cooldown = random.uniform(0.8, 1.5)
+
+            if not self.alive:
+                return
+
+            targets = [e for e in entities if e is not self and getattr(e, 'alive', True)]
+            if not targets:
+        # يتحرك عشوائيًا لو مفيش أهداف
+                if random.random() < 0.05:  # 5% احتمال كل frame → أكتر نشاط
+                    nx = clamp(self.x + random.uniform(-100, 100), 10, WORLD_W - 10)
+                    ny = clamp(self.y + random.uniform(-100, 100), 10, WORLD_H - 10)
+                    self.path = astar_path(self.grid_pos(), (int(nx // CELL_SIZE), int(ny // CELL_SIZE)))
+                self.follow_path(dt)
+                return
+
+            nearest = min(targets, key=lambda t: dist((self.x, self.y), (t.x, t.y)))
+            d = dist((self.x, self.y), (nearest.x, nearest.y))
+
+    # 🧠 منطق الحالات
+            if self.state == "idle":
+                if d < 350 and line_of_sight((self.x, self.y), (nearest.x, nearest.y)):
+                    self.state = "chase"
+                else:
+                    self.follow_path(dt)
+
+            elif self.state == "chase":
+                self.path_timer -= dt
+                if self.path_timer <= 0:
+                    self.path_timer = 0.3 + random.random() * 0.2
+                    start = self.grid_pos()
+                    goal = (int(nearest.x // CELL_SIZE), int(nearest.y // CELL_SIZE))
+                    self.path = astar_path(start, goal)
+                    if self.path and self.path[0] == start:
+                        self.path.pop(0)
+
+                if d < 220 and line_of_sight((self.x, self.y), (nearest.x, nearest.y)):
+                    self.state = "attack"
+                else:
+                    self.follow_path(dt)
+
+            elif self.state == "attack":
+                if not line_of_sight((self.x, self.y), (nearest.x, nearest.y)):
+                    self.state = "chase"
+                else:
+                    self.shoot_cooldown -= dt
+                    if self.shoot_cooldown <= 0:
+                        tx = nearest.x + random.uniform(-10, 10)
+                        ty = nearest.y + random.uniform(-10, 10)
+                        bullets.append(Bullet(self.x, self.y, tx, ty, owner=self))
+                        self.shoot_cooldown = random.uniform(0.7, 1.3)
+                    if random.random() < 0.05:
+                        self.follow_path(dt)
 
 class Bullet:
     def __init__(self,x,y,tx,ty,owner):
