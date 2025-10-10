@@ -16,6 +16,7 @@ import pygame, random, math, sys, time, heapq
 # ---------- Config ----------
 
 
+
 WIDTH, HEIGHT = 1500, 1000
 FPS = 60
 
