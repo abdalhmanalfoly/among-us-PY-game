@@ -180,9 +180,26 @@ SCALE_Y = MINIMAP_HEIGHT / WORLD_H
 
 # ---------- Entities ----------
 class Entity:
-    def __init__(self,x,y,w,h,color):
-        self.x=float(x); self.y=float(y); self.w=w; self.h=h; self.color=color
-    def rect(self): return pygame.Rect(int(self.x-self.w/2), int(self.y-self.h/2), self.w, self.h)
+    def __init__(self, x, y, w, h, color):
+        self.x = float(x)
+        self.y = float(y)
+        self.w = w
+        self.h = h
+        self.color = color
+
+        # تأكد إن الكيان داخل حدود العالم
+        # منع الخروج من حدود العالم
+        self.x = max(self.w / 2, min(WORLD_W - self.w / 2, self.x))
+        self.y = max(self.h / 2, min(WORLD_H - self.h / 2, self.y))
+
+
+
+    @staticmethod
+    def clamp(value, minv, maxv):
+        return max(minv, min(value, maxv))
+
+    def rect(self):
+        return pygame.Rect(int(self.x - self.w / 2), int(self.y - self.h / 2), self.w, self.h)
 
 class Player(Entity):
     def __init__(self,x,y):
@@ -190,6 +207,9 @@ class Player(Entity):
         self.health=PLAYER_MAX_HEALTH; self.speed=PLAYER_SPEED; self.ammo=30; self.alive=True
     def update(self, keys, dt):
         if not self.alive: return
+        self.x = max(self.w / 2, min(WORLD_W - self.w / 2, self.x))
+        self.y = max(self.h / 2, min(WORLD_H - self.h / 2, self.y))
+
         dx=dy=0
         if keys[pygame.K_a] or keys[pygame.K_LEFT]: dx-=1
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]: dx+=1
@@ -215,92 +235,129 @@ class Player(Entity):
         pygame.draw.rect(surf, self.color, (sx-8, sy-6, 16, 18)) # جسم
 
 class Bot(Entity):
-    def __init__(self, x,y, idx):
-        super().__init__(x,y,26,26,(240,100,100))
-        self.health=BOT_MAX_HEALTH; self.speed=BOT_SPEED; self.state="wander"
-        self.alive=True; self.idx=idx
-        self.shoot_cooldown = random.uniform(0.6,1.6)
+    def __init__(self, x, y, idx):
+        super().__init__(x, y, 26, 26, (240, 100, 100))
+        self.health = BOT_MAX_HEALTH
+        self.speed = BOT_SPEED
+        self.state = "wander"
+        self.alive = True
+        self.idx = idx
+        self.shoot_cooldown = random.uniform(0.6, 1.6)
         self.path = []
         self.path_timer = 0
+
     def grid_pos(self):
-        return int(self.x//CELL_SIZE), int(self.y//CELL_SIZE)
+        return int(self.x // CELL_SIZE), int(self.y // CELL_SIZE)
+
     def follow_path(self, dt):
-        if not self.path: return
+        if not self.path:
+            return
+
         target = self.path[0]
-        tx = target[0]*CELL_SIZE + CELL_SIZE/2
-        ty = target[1]*CELL_SIZE + CELL_SIZE/2
-        dx = tx - self.x; dy = ty - self.y
-        d = math.hypot(dx,dy) or 1
+        tx = target[0] * CELL_SIZE + CELL_SIZE / 2
+        ty = target[1] * CELL_SIZE + CELL_SIZE / 2
+        dx = tx - self.x
+        dy = ty - self.y
+        d = math.hypot(dx, dy) or 1
         step = min(self.speed, d)
-        self.x += (dx/d)*step
-        self.y += (dy/d)*step
+
+        new_x = self.x + (dx / d) * step
+        new_y = self.y + (dy / d) * step
+
+    # التحقق إن الخلية داخل حدود المتاهة
+        cell_x = int(new_x // CELL_SIZE)
+        cell_y = int(new_y // CELL_SIZE)
+
+        if 0 <= cell_x < COLS and 0 <= cell_y < ROWS:
+            # فحص التصادم باستخدام مستطيلات الجدران
+            test_rect = pygame.Rect(new_x - self.w/2, new_y - self.h/2, self.w, self.h)
+            if test_rect.collidelist(wall_rects) == -1:
+                self.x = new_x
+                self.y = new_y
+            else:
+            # لو فيه تصادم، احذف أول نقطة في المسار
+                self.path.pop(0)
+                return
+        else:
+        # خرج برا حدود المتاهة
+            self.path.clear()
+            return
+
+    # لو اقترب من الهدف، ينتقل للنقطة التالية
         if d < 4:
             self.path.pop(0)
+
     def draw(self, surf, camx, camy):
         sx, sy = world_to_screen(self.x, self.y, camx, camy)
-        # شخصية افتراضية (رأس + جسم بلون مختلف)
-        pygame.draw.circle(surf, (255,200,200), (sx, sy-8), 6)
-        pygame.draw.rect(surf, self.color, (sx-8, sy-6, 16, 18))
+        pygame.draw.circle(surf, (255, 200, 200), (sx, sy - 8), 6)
+        pygame.draw.rect(surf, self.color, (sx - 8, sy - 6, 16, 18))
 
     def update(self, entities, bullets, dt):
-        if not self.alive: return
-        # اختيار أقرب هدف (لاعب أو بوت آخر)
-        targets = [e for e in entities if e is not self and getattr(e,'alive',True)]
-        if not targets:
-            # wander random
-            if random.random() < 0.01:
-                nx = clamp(self.x + random.uniform(-80,80), 10, WORLD_W-10)
-                ny = clamp(self.y + random.uniform(-80,80), 10, WORLD_H-10)
-                self.path = astar_path(self.grid_pos(), (int(nx//CELL_SIZE), int(ny//CELL_SIZE)))
-            self.follow_path(dt); return
+        if not self.alive:
+            return
 
-        nearest = min(targets, key=lambda t: dist((self.x,self.y),(t.x,t.y)))
-        d = dist((self.x,self.y),(nearest.x,nearest.y))
+        targets = [e for e in entities if e is not self and getattr(e, 'alive', True)]
+        if not targets:
+            if random.random() < 0.01:
+                nx = clamp(self.x + random.uniform(-80, 80), 10, WORLD_W - 10)
+                ny = clamp(self.y + random.uniform(-80, 80), 10, WORLD_H - 10)
+                self.path = astar_path(self.grid_pos(), (int(nx // CELL_SIZE), int(ny // CELL_SIZE)))
+            
+
+            self.follow_path(dt)
+            return
+
+        nearest = min(targets, key=lambda t: dist((self.x, self.y), (t.x, t.y)))
+        d = dist((self.x, self.y), (nearest.x, nearest.y))
 
         # إعادة حساب المسار من وقت لآخر
         self.path_timer -= dt
         if self.path_timer <= 0:
-            self.path_timer = 0.6 + random.random()*0.9
+            self.path_timer = 0.6 + random.random() * 0.9
             start = self.grid_pos()
-            goal = (int(nearest.x//CELL_SIZE), int(nearest.y//CELL_SIZE))
+            goal = (int(nearest.x // CELL_SIZE), int(nearest.y // CELL_SIZE))
             self.path = astar_path(start, goal)
-            if self.path and self.path[0]==start: self.path.pop(0)
+            if self.path and self.path[0] == start:
+                self.path.pop(0)
 
-        # تنفيذ المسار أو الحركة المباشرة
+        # تنفيذ المسار بأمان
         if self.path:
             self.follow_path(dt)
         else:
-            dx = nearest.x - self.x; dy = nearest.y - self.y
-            mag = math.hypot(dx,dy) or 1
-            nx = self.x + (dx/mag)*self.speed
-            ny = self.y + (dy/mag)*self.speed
+            dx = nearest.x - self.x
+            dy = nearest.y - self.y
+            mag = math.hypot(dx, dy) or 1
+            nx = self.x + (dx / mag) * self.speed
+            ny = self.y + (dy / mag) * self.speed
+
             oldx, oldy = self.x, self.y
             self.x = nx
-            if self.rect().collidelist(wall_rects) != -1: self.x = oldx
+            if self.rect().collidelist(wall_rects) != -1:
+                self.x = oldx
             self.y = ny
-            if self.rect().collidelist(wall_rects) != -1: self.y = oldy
+            if self.rect().collidelist(wall_rects) != -1:
+                self.y = oldy
 
-        # منطق إطلاق النار: إذا في رؤية أو محاولة ricochet عند قرب بوت آخر
+        # منطق إطلاق النار
         self.shoot_cooldown -= dt
         if d < 260 and self.shoot_cooldown <= 0:
-            if line_of_sight((self.x,self.y),(nearest.x,nearest.y)):
-                tx = nearest.x + random.uniform(-10,10); ty = nearest.y + random.uniform(-10,10)
+            if line_of_sight((self.x, self.y), (nearest.x, nearest.y)):
+                tx = nearest.x + random.uniform(-10, 10)
+                ty = nearest.y + random.uniform(-10, 10)
                 bullets.append(Bullet(self.x, self.y, tx, ty, owner=self))
-                self.shoot_cooldown = random.uniform(0.7,1.6)
-            else:
-                # محاولة ricochet إذا الهدف بوت وكان قريب
-                if isinstance(nearest, Bot) and d < 170:
-                    wpt = choose_wall_point_for_ricochet((self.x,self.y),(nearest.x,nearest.y))
-                    if wpt:
-                        bullets.append(Bullet(self.x, self.y, wpt[0], wpt[1], owner=self))
-                        self.shoot_cooldown = random.uniform(0.9,1.8)
+                self.shoot_cooldown = random.uniform(0.7, 1.6)
+            elif isinstance(nearest, Bot) and d < 170:
+                wpt = choose_wall_point_for_ricochet((self.x, self.y), (nearest.x, nearest.y))
+                if wpt:
+                    bullets.append(Bullet(self.x, self.y, wpt[0], wpt[1], owner=self))
+                    self.shoot_cooldown = random.uniform(0.9, 1.8)
 
 class Bullet:
     def __init__(self,x,y,tx,ty,owner):
         self.x=x; self.y=y; self.owner=owner
         dx,dy = tx-x, ty-y; mag = math.hypot(dx,dy) or 1
         self.vx = (dx/mag)*BULLET_SPEED; self.vy = (dy/mag)*BULLET_SPEED
-        self.r = 4; self.alive=True; self.damage = 0 if isinstance(owner, Bot) else 32
+        self.r = 4; self.alive=True; self.damage = .3 if isinstance(owner, Bot) else 32
         self.bounces = 0
     def update(self, dt):
         if not self.alive: return
@@ -346,44 +403,85 @@ def dir_between(a,b):
     return 0
 
 def neighbors(cell):
-    x,y = cell
-    nbrs = []
-    for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
-        nx,ny = x+dx, y+dy
-        if 0 <= nx < COLS and 0 <= ny < ROWS:
-            if not maze[x][y][dir_between((x,y),(nx,ny))]:
-                nbrs.append((nx,ny))
-    return nbrs
+    x, y = cell
+    dirs = [(-1,0),(1,0),(0,-1),(0,1)]  # يسار، يمين، فوق، تحت
+    result = []
+
+    for dx, dy in dirs:
+        nx, ny = x + dx, y + dy
+
+        # تحقق من أن الإحداثيات داخل حدود الماب
+        if not (0 <= nx < COLS and 0 <= ny < ROWS):
+            continue
+
+        # تحقق أن الجدار بين الخليتين مفتوح
+        try:
+            if not maze[y][x][dir_between((x,y),(nx,ny))] and not maze[ny][nx][dir_between((nx,ny),(x,y))]:
+                result.append((nx, ny))
+        except IndexError:
+            # لو في أي مشكلة في حدود المصفوفة تجاهل الجار
+            continue
+
+    return result
 
 def astar_path(start, goal):
-    if start == goal: return []
-    sx,sy = start; gx,gy = goal
+    if start == goal:
+        return []
+
+    sx, sy = start
+    gx, gy = goal
+
+    ROWS = len(maze)
+    COLS = len(maze[0])
+
+    sx = max(0, min(COLS - 1, sx))
+    sy = max(0, min(ROWS - 1, sy))
+    gx = max(0, min(COLS - 1, gx))
+    gy = max(0, min(ROWS - 1, gy))
+
+    if maze[sy][sx] == 1 or maze[gy][gx] == 1:
+        return []
+
+    import heapq
     open_set = []
-    heapq.heappush(open_set, (0, start))
+    heapq.heappush(open_set, (0, (sx, sy)))
     came_from = {}
-    gscore = {start:0}
-    fscore = {start: abs(sx-gx)+abs(sy-gy)}
-    max_iters = COLS*ROWS*4
+    gscore = {(sx, sy): 0}
+    fscore = {(sx, sy): abs(sx - gx) + abs(sy - gy)}
+    max_iters = COLS * ROWS * 4
     iters = 0
+
     while open_set and iters < max_iters:
         iters += 1
         _, current = heapq.heappop(open_set)
-        if current == goal:
+
+        if current == (gx, gy):
             path = []
             c = current
             while c in came_from:
-                path.append(c); c = came_from[c]
+                path.append(c)
+                c = came_from[c]
             path.reverse()
             return path
+
         for nb in neighbors(current):
+            cx, cy = nb
+
+            if not (0 <= cx < COLS and 0 <= cy < ROWS):
+                continue
+
+            if maze[cy][cx] == 1:
+                continue
+
             tentative = gscore[current] + 1
             if tentative < gscore.get(nb, 1e9):
                 came_from[nb] = current
                 gscore[nb] = tentative
-                f = tentative + abs(nb[0]-gx)+abs(nb[1]-gy)
+                f = tentative + abs(nb[0] - gx) + abs(nb[1] - gy)
                 if nb not in fscore or f < fscore[nb]:
                     fscore[nb] = f
                     heapq.heappush(open_set, (f, nb))
+
     return []
 
 # ---------- LOS helper ----------
@@ -483,35 +581,47 @@ while running:
     for b in bots:
         b.update(all_entities, bullets, dt)
 
-    # bullets update
+# bullets update
     for bu in bullets:
         bu.update(dt)
 
-    # bullet collisions
-    for bu in bullets:
-        if not bu.alive: continue
-        # player hit
-        if player.alive and bu.owner is not player and getattr(bu.owner,'alive',True):
-            if dist((bu.x,bu.y),(player.x,player.y)) < player.w/2 + bu.r:
-                player.health -= bu.damage
-                bu.alive=False
-                if player.health <= 0: player.alive=False
-                continue
-        # bots
-        for b in bots:
-            if not b.alive: continue
-            if bu.owner is b: continue
-            if isinstance(bu.owner, Bot) and bu.owner is b: continue
-            if dist((bu.x,bu.y),(b.x,b.y)) < b.w/2 + bu.r:
-                b.health -= bu.damage
-                bu.alive=False
-                if b.health <= 0:
-                    b.alive=False
-                    if random.random() < 0.6:
-                        pickups.append(Pickup(b.x + random.randint(-10,10), b.y + random.randint(-10,10), random.choice(["ammo","med"])))
-                break
+# bullet collisions (fixed logic)
+    for bu in bullets:  # ← هنا يبدأ اللوب اللي يعرف المتغير bu
+        if not bu.alive:
+            continue
 
+    # الرصاص من اللاعب → يصيب البوتات فقط
+        if bu.owner == "player":
+            for b in bots:
+                if not b.alive:
+                    continue
+                if dist((bu.x, bu.y), (b.x, b.y)) < b.w/2 + bu.r:
+                    b.health -= bu.damage
+                    bu.alive = False
+                    if b.health <= 0:
+                        b.alive = False
+                    # احتمال ظهور Pickup بعد موت البوت
+                        if random.random() < 0.6:
+                            pickups.append(
+                                Pickup(
+                                    b.x + random.randint(-10, 10),
+                                    b.y + random.randint(-10, 10),
+                                    random.choice(["ammo", "med"])
+                                )
+                            )
+                    break
+
+    # الرصاص من بوت → يصيب اللاعب فقط
+        elif isinstance(bu.owner, Bot):
+            if player.alive and dist((bu.x, bu.y), (player.x, player.y)) < player.w/2 + bu.r:
+                player.health -= bu.damage
+                bu.alive = False
+                if player.health <= 0:
+                    player.alive = False
+
+# إزالة الرصاصات الميتة
     bullets = [b for b in bullets if b.alive]
+
 
     # pickups collision
     for p in pickups[:]:
@@ -632,7 +742,7 @@ while running:
     pygame.display.flip()
 
 # end
-pygame.time.wait(300)
+pygame.time.wait(100)
 screen.fill((10,10,20))
 msg = f"Game Over - Winner: {winner}"
 screen.blit(font.render(msg, True, (240,240,240)), (WIDTH//2-200, HEIGHT//2-10))
