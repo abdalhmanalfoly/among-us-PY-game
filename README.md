@@ -1,4 +1,4 @@
-﻿# among-us-PY-game
+﻿# game
 
 run source code in your pc used this commend
 
@@ -44,6 +44,7 @@ pip install pyinstaller
 pip install pygame
 
 python -m PyInstaller --onefile --noconsole --name="MazeBattleRoyale" game.py
+
 
 
 
