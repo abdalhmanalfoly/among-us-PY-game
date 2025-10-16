@@ -10,104 +10,98 @@ Maze Battle Royale v3
 - 10 bots by default
 """
 
-from html import entities
-import pygame, random, math, sys, time, heapq
+import pygame, random, math, sys, time 
+from network_client import NetworkClient
+import uuid
 
 # ---------- Config ----------
-
-
-
-WIDTH, HEIGHT = 1500, 1000
+WIDTH, HEIGHT = 1700, 1000
 FPS = 60
 
-# ---------- Mini Map Settings ----------
-MINIMAP_WIDTH = 200
-MINIMAP_HEIGHT = 140
-MINIMAP_X = WIDTH - MINIMAP_WIDTH - 10  # top-right corner
-MINIMAP_Y = 10
-
-
-CELL_SIZE = 90                # حجم الخلية
-COLS = 70     # عدد الأعمدة (كبرت المتاهة)
-ROWS = 36     # عدد الصفوف
-
-PLAYER_SPEED = 2.6
-BULLET_SPEED = 14
-BOT_SPEED = 1.9
-BOT_COUNT = 10
-
-PLAYER_MAX_HEALTH = 100
-BOT_MAX_HEALTH = 75
-
-PICKUP_COUNT = 12
-
-# ricochet
-MAX_BOUNCES = 3
-BOUNCE_ENERGY_LOSS = 0.62
-
+# Maze grid
 CELL_SIZE = 40
 COLS = 50
 ROWS = 36
 
-WORLD_W = COLS * CELL_SIZE
-WORLD_H = ROWS * CELL_SIZE
+# Player / Bot settings
+PLAYER_SPEED = 2.6
+BOT_SPEED = 1.9
+BULLET_SPEED = 14
+BOT_COUNT = 10
+PLAYER_MAX_HEALTH = 100
+BOT_MAX_HEALTH = 75
 
-SCALE_X = MINIMAP_WIDTH / WORLD_W
-SCALE_Y = MINIMAP_HEIGHT / WORLD_H
+# Physics / Ricochet
+MAX_BOUNCES = 3
+BOUNCE_ENERGY_LOSS = 0.62
 
+# Pickups
+PICKUP_COUNT = 12
 
-# ---------- Mini Map Settings ----------
+# Mini Map
 MINIMAP_WIDTH = 200
 MINIMAP_HEIGHT = 140
 MINIMAP_X = WIDTH - MINIMAP_WIDTH - 10
 MINIMAP_Y = 10
 
-
+# World
+WORLD_W = COLS * CELL_SIZE
+WORLD_H = ROWS * CELL_SIZE
+SCALE_X = MINIMAP_WIDTH / WORLD_W
+SCALE_Y = MINIMAP_HEIGHT / WORLD_H
 
 
 # ---------- Init ----------
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Maze Battle Royale v3 — Player = Human")
+pygame.display.set_caption("Fight Easy Royale v3")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("Consolas", 18)
+ # music
+pygame.mixer.init()
+pygame.mixer.music.load("music.mp3") 
+pygame.mixer.music.play(-1) 
+pygame.mixer.music.set_volume(0.2)  
 
 def dist(a,b): return math.hypot(a[0]-b[0], a[1]-b[1])
 def clamp(v,a,b): return max(a,min(b,v))
 # min map helper
 def draw_full_map(screen, rooms, cell_size, minimap_width, minimap_height, pos=(WIDTH-210, 10)):
-    # سطح للـ mini-map
     minimap_surf = pygame.Surface((minimap_width, minimap_height))
     minimap_surf.set_alpha(220)
     minimap_surf.fill((10, 10, 30))
 
-    # حساب أبعاد العالم الكامل بناءً على الغرف
-    world_w = max(rx + rw for (rx, ry, rw, rh) in rooms) * cell_size
-    world_h = max(ry + rh for (rx, ry, rw, rh) in rooms) * cell_size
+    if not rooms:
+        return
+
+    min_x = min(rx for (rx, ry, rw, rh) in rooms)
+    min_y = min(ry for (rx, ry, rw, rh) in rooms)
+    max_x = max(rx + rw for (rx, ry, rw, rh) in rooms)
+    max_y = max(ry + rh for (rx, ry, rw, rh) in rooms)
+
+    world_w = (max_x - min_x) * cell_size
+    world_h = (max_y - min_y) * cell_size
 
     scale_x = minimap_width / world_w
     scale_y = minimap_height / world_h
 
     font_small = pygame.font.SysFont("Consolas", 12)
 
-    # رسم الغرف
     for idx, (rx, ry, rw, rh) in enumerate(rooms):
-        rx_px = rx * cell_size * scale_x
-        ry_px = ry * cell_size * scale_y
+        rx_px = (rx - min_x) * cell_size * scale_x
+        ry_px = (ry - min_y) * cell_size * scale_y
         rw_px = rw * cell_size * scale_x
         rh_px = rh * cell_size * scale_y
-        pygame.draw.rect(minimap_surf, (180, 180, 220), (rx_px, ry_px, rw_px, rh_px))
+        pygame.draw.rect(minimap_surf, (180, 180, 220), (rx_px, ry_px, rw_px, rh_px), 0)
         minimap_surf.blit(font_small.render(f"R{idx+1}", True, (255, 255, 255)), (rx_px + 2, ry_px + 2))
 
-    # رسم على الشاشة
     screen.blit(minimap_surf, pos)
 
 # ---------- Maze generation (DFS) + add random internal walls ----------
 # ---------- New "Room-based Maze" ----------
 def make_maze(cols, rows):
-    # كل الخلايا مفتوحة
     maze = [[[False, False, False, False] for _ in range(rows)] for _ in range(cols)]
-# ---------- تصميم الغرف ثابت ----------
+# ---------- desgin romms ----------
     rooms = [
         (2, 2, 6, 5),    
         (10, 3, 5, 6),   
@@ -121,8 +115,8 @@ def make_maze(cols, rows):
         (28, 20, 6, 6),  
     ]
 
-    room_count = 10  # عدد الغرف
-    min_size, max_size = 4, 8  # حجم الغرفة
+    room_count = 10  
+    min_size, max_size = 4, 8  
 
     for _ in range(room_count):
         rw = random.randint(min_size, max_size)
@@ -130,10 +124,8 @@ def make_maze(cols, rows):
         rx = random.randint(1, cols - rw - 1)
         ry = random.randint(1, rows - rh - 1)
 
-        # تخزين الغرفة
         rooms.append((rx, ry, rw, rh))
 
-        # إضافة جدران الغرفة
     for rx, ry, rw, rh in rooms:
         for x in range(rx, rx + rw):
             for y in range(ry, ry + rh):
@@ -142,7 +134,6 @@ def make_maze(cols, rows):
                 if y == ry: maze[x][y][0] = True  # top wall
                 if y == ry + rh - 1: maze[x][y][2] = True  # bottom wall
 
- # ربط الغرف بالطرق (نفس الطريقة السابقة)
     for i in range(len(rooms) - 1):
         x1, y1, w1, h1 = rooms[i]
         x2, y2, w2, h2 = rooms[i + 1]
@@ -157,7 +148,7 @@ def make_maze(cols, rows):
 
 maze, rooms = make_maze(COLS, ROWS)
 
-# بناء مستطيلات الجدران (للكوليجن والLOS)
+
 wall_rects = []
 for x in range(COLS):
     for y in range(ROWS):
@@ -189,8 +180,6 @@ class Entity:
         self.h = h
         self.color = color
 
-        # تأكد إن الكيان داخل حدود العالم
-        # منع الخروج من حدود العالم
         self.x = max(self.w / 2, min(WORLD_W - self.w / 2, self.x))
         self.y = max(self.h / 2, min(WORLD_H - self.h / 2, self.y))
 
@@ -221,7 +210,7 @@ class Player(Entity):
             mag = math.hypot(dx,dy) or 1
             nx = self.x + (dx/mag)*self.speed
             ny = self.y + (dy/mag)*self.speed
-            # فحص التصادم محورًا محورًا (smooth sliding)
+ 
             oldx, oldy = self.x, self.y
             self.x = nx
             if self.rect().collidelist(wall_rects) != -1: self.x = oldx
@@ -232,9 +221,9 @@ class Player(Entity):
 
     def draw(self, surf, camx, camy):
         sx, sy = world_to_screen(self.x, self.y, camx, camy)
-        # رسم شخصية مبسطة: رأس + جسم
-        pygame.draw.circle(surf, (255,220,180), (sx, sy-8), 6)   # رأس
-        pygame.draw.rect(surf, self.color, (sx-8, sy-6, 16, 18)) # جسم
+
+        pygame.draw.circle(surf, (255,220,180), (sx, sy-8), 6)   
+        pygame.draw.rect(surf, self.color, (sx-8, sy-6, 16, 18)) 
 
 class Bot(Entity):
     def __init__(self, x, y, idx):
@@ -292,18 +281,25 @@ class Bot(Entity):
     def update(self, entities, bullets, dt):
         if not self.alive:
             return
+        #
+        # اجعل البوت يستهدف اللاعب فقط
+        player = entities[0]  # أول عنصر في القائمة هو اللاعب (راجع في الـ game loop)
+        if not player.alive:
+            return  # لو اللاعب مات البوت يقف أو يلف عشوائي
 
-        targets = [e for e in entities if e is not self and getattr(e, 'alive', True)]
-        if not targets:
-            if not self.path or random.random() < 0.1:
-                nx = clamp(self.x + random.uniform(-150, 150), 10, WORLD_W - 10)
-                ny = clamp(self.y + random.uniform(-150, 150), 10, WORLD_H - 10)
-                self.path = astar_path(self.grid_pos(), (int(nx // CELL_SIZE), int(ny // CELL_SIZE)))
-            self.follow_path(dt)
-            return
+        nearest = player
+        d = dist((self.x, self.y), (player.x, player.y))
 
-        nearest = min(targets, key=lambda t: dist((self.x, self.y), (t.x, t.y)))
-        d = dist((self.x, self.y), (nearest.x, nearest.y))
+        #targets = [e for e in entities if e is not self and getattr(e, 'alive', True)]
+        #if not targets:
+         #   if not self.path or random.random() < 0.1:
+          #      nx = clamp(self.x + random.uniform(-150, 150), 10, WORLD_W - 10)
+           #     ny = clamp(self.y + random.uniform(-150, 150), 10, WORLD_H - 10)
+            #    self.path = astar_path(self.grid_pos(), (int(nx // CELL_SIZE), int(ny // CELL_SIZE)))
+            #self.follow_path(dt)
+            #return
+#        nearest = min(targets, key=lambda t: dist((self.x, self.y), (t.x, t.y)))
+#d = dist((self.x, self.y), (nearest.x, nearest.y))
 
         self.path_timer -= dt
         if self.path_timer <= 0:
@@ -349,8 +345,8 @@ class Bot(Entity):
 
             targets = [e for e in entities if e is not self and getattr(e, 'alive', True)]
             if not targets:
-        # يتحرك عشوائيًا لو مفيش أهداف
-                if random.random() < 0.05:  # 5% احتمال كل frame → أكتر نشاط
+
+                if random.random() < 0.05: 
                     nx = clamp(self.x + random.uniform(-100, 100), 10, WORLD_W - 10)
                     ny = clamp(self.y + random.uniform(-100, 100), 10, WORLD_H - 10)
                     self.path = astar_path(self.grid_pos(), (int(nx // CELL_SIZE), int(ny // CELL_SIZE)))
@@ -360,7 +356,6 @@ class Bot(Entity):
             nearest = min(targets, key=lambda t: dist((self.x, self.y), (t.x, t.y)))
             d = dist((self.x, self.y), (nearest.x, nearest.y))
 
-    # 🧠 منطق الحالات
             if self.state == "idle":
                 if d < 350 and line_of_sight((self.x, self.y), (nearest.x, nearest.y)):
                     self.state = "chase"
@@ -400,7 +395,7 @@ class Bullet:
         self.x=x; self.y=y; self.owner=owner
         dx,dy = tx-x, ty-y; mag = math.hypot(dx,dy) or 1
         self.vx = (dx/mag)*BULLET_SPEED; self.vy = (dy/mag)*BULLET_SPEED
-        self.r = 4; self.alive=True; self.damage = .3 if isinstance(owner, Bot) else 32
+        self.r = 4; self.alive=True; self.damage = 8 if isinstance(owner, Bot) else 32
         self.bounces = 0
     def update(self, dt):
         if not self.alive: return
@@ -412,7 +407,7 @@ class Bullet:
             if r.colliderect(wr):
                 hit_any = wr; break
         if hit_any:
-            # حساب تقريبي لاعادة الانعكاس: نقرر أفقياً أم رأسياً حسب التداخل
+
             overlap_x = max(0, min(nx+self.r, hit_any.right) - max(nx-self.r, hit_any.left))
             overlap_y = max(0, min(ny+self.r, hit_any.bottom) - max(ny-self.r, hit_any.top))
             if overlap_y >= overlap_x:
@@ -447,22 +442,22 @@ def dir_between(a,b):
 
 def neighbors(cell):
     x, y = cell
-    dirs = [(-1,0),(1,0),(0,-1),(0,1)]  # يسار، يمين، فوق، تحت
+    dirs = [(-1,0),(1,0),(0,-1),(0,1)] 
     result = []
 
     for dx, dy in dirs:
         nx, ny = x + dx, y + dy
 
-        # تحقق من أن الإحداثيات داخل حدود الماب
+
         if not (0 <= nx < COLS and 0 <= ny < ROWS):
             continue
 
-        # تحقق أن الجدار بين الخليتين مفتوح
+
         try:
             if not maze[y][x][dir_between((x,y),(nx,ny))] and not maze[ny][nx][dir_between((nx,ny),(x,y))]:
                 result.append((nx, ny))
         except IndexError:
-            # لو في أي مشكلة في حدود المصفوفة تجاهل الجار
+
             continue
 
     return result
@@ -585,9 +580,25 @@ def world_to_screen(wx, wy, camx, camy):
     return int(wx - camx + WIDTH/2), int(wy - camy + HEIGHT/2)
 
 # ---------- Game loop ----------
+player = Player(100, 100)
+    
+    # server multiplayer client
+my_id = str(uuid.uuid4())[:8]
+net = NetworkClient(server_host="127.0.0.1", server_port=5555, client_id=my_id)
+net.connect(start_x=player.x, start_y=player.y)
 running=True; winner=None
 while running:
+
     dt = clock.tick(FPS)/1000.0
+     #player network
+#
+    net.send_update([player.x, player.y])
+
+
+    others = net.get_other_players()
+    for pid, pos in net.get_other_players().items():
+        pygame.draw.circle(screen, (255, 255, 0), (int(pos["x"]), int(pos["y"])), 10)
+
 
     # events
     for e in pygame.event.get():
@@ -596,7 +607,7 @@ while running:
         elif e.type == pygame.KEYDOWN:
             if e.key == pygame.K_ESCAPE: running=False
             if e.key == pygame.K_SPACE:
-                # اطلاق من SPACE باتجاه موضع الماوس (تحكم كما طلبت)
+
                 if player.alive and player.ammo>0:
                     mx,my = pygame.mouse.get_pos()
                     camx, camy = player.x, player.y
@@ -605,7 +616,7 @@ while running:
                     bullets.append(Bullet(player.x, player.y, wx, wy, owner="player"))
                     player.ammo -= 1
         elif e.type == pygame.MOUSEBUTTONDOWN and e.button==1:
-            # أيضًا نسمح بالفأرة لإطلاق (اختياري) — لكن الأساسي Space
+
             if player.alive and player.ammo>0:
                 mx,my = pygame.mouse.get_pos()
                 camx, camy = player.x, player.y
@@ -629,11 +640,11 @@ while running:
         bu.update(dt)
 
 # bullet collisions (fixed logic)
-    for bu in bullets:  # ← هنا يبدأ اللوب اللي يعرف المتغير bu
+    for bu in bullets:  
         if not bu.alive:
             continue
 
-    # الرصاص من اللاعب → يصيب البوتات فقط
+    
         if bu.owner == "player":
             for b in bots:
                 if not b.alive:
@@ -643,7 +654,7 @@ while running:
                     bu.alive = False
                     if b.health <= 0:
                         b.alive = False
-                    # احتمال ظهور Pickup بعد موت البوت
+
                         if random.random() < 0.6:
                             pickups.append(
                                 Pickup(
@@ -654,7 +665,7 @@ while running:
                             )
                     break
 
-    # الرصاص من بوت → يصيب اللاعب فقط
+
         elif isinstance(bu.owner, Bot):
             if player.alive and dist((bu.x, bu.y), (player.x, player.y)) < player.w/2 + bu.r:
                 player.health -= bu.damage
@@ -662,7 +673,7 @@ while running:
                 if player.health <= 0:
                     player.alive = False
 
-# إزالة الرصاصات الميتة
+
     bullets = [b for b in bullets if b.alive]
 
 
@@ -751,13 +762,13 @@ while running:
     pygame.draw.line(screen, (220,220,220), (mx-10,my), (mx+10,my), 1)
     pygame.draw.line(screen, (220,220,220), (mx,my-10), (mx,my+10), 1)
 
-# خلفية شفافة (باستخدام Surface)
+
    # ---------- Draw Mini Map ----------
     minimap_surf = pygame.Surface((MINIMAP_WIDTH, MINIMAP_HEIGHT))
-    minimap_surf.set_alpha(180)  # شفافية
+    minimap_surf.set_alpha(180)  
     minimap_surf.fill((10,10,30))
 
-# رسم الغرف
+# ROOM
     font_small = pygame.font.SysFont("Consolas", 12)
     for idx, (rx, ry, rw, rh) in enumerate(rooms):  
         rx_px = rx * CELL_SIZE * SCALE_X
@@ -765,25 +776,25 @@ while running:
         rw_px = rw * CELL_SIZE * SCALE_X
         rh_px = rh * CELL_SIZE * SCALE_Y
     pygame.draw.rect(minimap_surf, (180,180,220), (rx_px, ry_px, rw_px, rh_px))
-    # اسم الغرفة
+
     minimap_surf.blit(font_small.render(f"R{idx+1}", True, (255,255,255)), (rx_px+2, ry_px+2))
 
-# اللاعب
+# PLAYER
     px_minimap = player.x * SCALE_X
     py_minimap = player.y * SCALE_Y
     pygame.draw.circle(minimap_surf, (50,180,255), (int(px_minimap), int(py_minimap)), 4)
 
-# البوتات
+# BOTS
     for b in bots:
         if not b.alive: continue
         bx_minimap = b.x * SCALE_X
         by_minimap = b.y * SCALE_Y
     pygame.draw.circle(minimap_surf, (240,100,100), (int(bx_minimap), int(by_minimap)), 3)
 
-# رسم الـ mini map على الشاشة
+
     screen.blit(minimap_surf, (MINIMAP_X, MINIMAP_Y))
     pygame.display.flip()
-
+    net.close()
 # end
 pygame.time.wait(100)
 screen.fill((10,10,20))
